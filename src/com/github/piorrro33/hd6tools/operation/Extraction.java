@@ -13,7 +13,7 @@ import java.util.stream.Stream;
 import static java.nio.ByteOrder.LITTLE_ENDIAN;
 
 class Extraction {
-    public static boolean perform(Path datPath, Path hd6Path, Path folderPath) {
+    public static boolean perform(Path datPath, Path hd6Path, Path destFolderPath) {
         // Check if dat/hd6 exist, create destination folder if needed
         if (Files.notExists(datPath)) {
             System.err.println("Data file could not be found!");
@@ -23,16 +23,16 @@ class Extraction {
             System.err.println("HD6 file could not be found!");
             return false;
         }
-        if (Files.notExists(folderPath)) {
+        if (Files.notExists(destFolderPath)) {
             System.out.println("Destination folder does not exist. Creating it...");
             try {
-                Files.createDirectories(folderPath);
+                Files.createDirectories(destFolderPath);
             } catch (IOException e) {
                 System.err.println("Could not create directory at given folder path! " + e.getLocalizedMessage());
                 return false;
             }
         }
-        try (Stream<Path> walk = Files.walk(folderPath, 1)) {
+        try (Stream<Path> walk = Files.walk(destFolderPath, 1)) {
             if (walk.count() > 1) {
                 System.out.println("Warning! The destination folder is not empty. Some files may be overwritten.\n" +
                         "Do you want to proceed (yes or no)?");
@@ -161,7 +161,7 @@ class Extraction {
                 datStreamOffset += datStream.read(fileData);
 
                 // Create folders and write the file
-                Path destFilePath = folderPath.resolve(filenameArr[i]);
+                Path destFilePath = destFolderPath.resolve(filenameArr[i]);
                 Path destFileFolderPath = destFilePath.getParent();
                 Files.createDirectories(destFileFolderPath);
                 Files.write(destFilePath, fileData);
