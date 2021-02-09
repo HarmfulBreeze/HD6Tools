@@ -76,8 +76,9 @@ class Reconstruction {
             return false;
         }
 
-        String[] strArr = new String[filePathList.size()];
-        for (int i = 0; i < filePathList.size(); i++) {
+        int fileCount = filePathList.size();
+        String[] strArr = new String[fileCount];
+        for (int i = 0; i < fileCount; i++) {
             strArr[i] = sourceFolderPath.relativize(filePathList.get(i)).toString();
         }
         String s_nameChunkData = String.join("\0", strArr) + "\0";
@@ -88,16 +89,16 @@ class Reconstruction {
         byte[] ba;
         short[] sa = null;
         int filenameTableSize;
-        if (filePathList.size() < 0x80) {
-            ba = new byte[filePathList.size()];
-            for (byte i = 0; i < filePathList.size(); i++) {
+        if (fileCount < 0x80) {
+            ba = new byte[fileCount];
+            for (byte i = 0; i < fileCount; i++) {
                 ba[i] = i;
             }
             filenameTableSize = ba.length * Byte.BYTES;
         } else {
             ba = new byte[0x80];
-            sa = new short[filePathList.size() - 0x80];
-            for (int i = 0; i < filePathList.size(); i++) {
+            sa = new short[fileCount - 0x80];
+            for (int i = 0; i < fileCount; i++) {
                 if (i < 0x80) {
                     ba[i] = (byte) i;
                 } else {
@@ -106,7 +107,27 @@ class Reconstruction {
             }
             filenameTableSize = (ba.length * Byte.BYTES) + (sa.length * Short.BYTES);
         }
-        int filenameTablePadding = 0x10 - (nameChunkDataSize % 0x10);
+        int filenameTablePadding = 0x10 - (filenameTableSize % 0x10);
+
+        // File entries
+        ByteBuffer[] bb_fileEntryArr = new ByteBuffer[fileCount];
+        int startOffset = 0;
+        for (int i = 0; i < fileCount; i++) {
+            Path curFilePath = filePathList.get(i);
+            bb_fileEntryArr[i] = ByteBuffer.allocate(8).order(LITTLE_ENDIAN);
+            short filenameOffset = (short) i;
+            int curFileSize;
+            try {
+                curFileSize = (int) Files.size(curFilePath);
+            } catch (IOException e) {
+                e.printStackTrace();
+                return false;
+            }
+            bb_fileEntryArr[i].putShort(filenameOffset);
+            bb_fileEntryArr[i].put(intToUint24(startOffset >> 0x9));
+            bb_fileEntryArr[i].put(intToUint24(curFileSize >> 0x4));
+            startOffset += curFileSize + (0x800 - (curFileSize % 0x800));
+        }
 
         try (OutputStream datStream = new BufferedOutputStream(Files.newOutputStream(datPath));
              OutputStream hd6Stream = new BufferedOutputStream(Files.newOutputStream(hd6Path))) {
@@ -115,16 +136,16 @@ class Reconstruction {
             bb_header.put(magic);
             bb_header.putInt(0x34); // header size
             bb_header.putInt(nameChunkDataSize);
-            bb_header.putInt(filePathList.size()); // name chunk amount (I'm lazy so it's file path size)
+            bb_header.putInt(fileCount); // name chunk amount (I'm lazy so it's file count)
             bb_header.putInt(0); // unk
             bb_header.putInt(0x34 + nameChunkDataSize + nameChunkDataPadding); // p_filenameTable
             bb_header.putInt(filenameTableSize);
             bb_header.putInt(0); // unk
             bb_header.putInt(0x10); // unk
-            bb_header.putInt(filePathList.size()); // fileCount
+            bb_header.putInt(fileCount); // fileCount
             bb_header.putInt(0x34 + nameChunkDataSize + nameChunkDataPadding + filenameTableSize + filenameTablePadding); // p_fileEntries
             bb_header.putInt(0); // unk
-            bb_header.putInt(0x34 + nameChunkDataSize + nameChunkDataPadding + filenameTableSize + filenameTablePadding + (filePathList.size() * 0x8)); // fileSize
+            bb_header.putInt(0x34 + nameChunkDataSize + nameChunkDataPadding + filenameTableSize + filenameTablePadding + (fileCount * 0x8)); // fileSize
             hd6Stream.write(bb_header.array());
 
             while (bb_nameChunkData.hasRemaining()) {
@@ -138,9 +159,26 @@ class Reconstruction {
                 bb_filenameTable.asShortBuffer().put(sa);
             }
             hd6Stream.write(bb_filenameTable.array());
+            hd6Stream.write(new byte[filenameTablePadding]);
+
+            for (ByteBuffer bb_fileEntry : bb_fileEntryArr) {
+                hd6Stream.write(bb_fileEntry.array());
+            }
         } catch (IOException e) {
             e.printStackTrace();
         }
         return true;
+    }
+
+    private static int uint24ToInt(byte[] ba) {
+        return ((ba[0] & 0xFF) | ((ba[1] & 0xFF) << 8) | ((ba[2] & 0xFF) << 16));
+    }
+
+    private static byte[] intToUint24(int val) {
+        byte[] ba = new byte[3];
+        ba[0] = (byte) (val & 0xFF);
+        ba[1] = (byte) ((val >> 0x8) & 0xFF);
+        ba[2] = (byte) ((val >> 0x10) & 0xFF);
+        return ba;
     }
 }
