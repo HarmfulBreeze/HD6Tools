@@ -48,6 +48,7 @@ class Extraction {
             System.err.println("An I/O error has occurred while walking the folder path! " + e.getLocalizedMessage());
         }
 
+        // Open stream to dat and HD6 files
         InputStream datStream, hd6Stream;
         try {
             datStream = new BufferedInputStream(Files.newInputStream(datPath));
@@ -74,6 +75,8 @@ class Extraction {
             ByteBuffer bb_p_filenameTable = ByteBuffer.allocate(4).order(LITTLE_ENDIAN);
             ByteBuffer bb_p_fileEntries = ByteBuffer.allocate(4).order(LITTLE_ENDIAN);
 
+            // Read necessary informations from the header
+            System.out.println("Reading header...");
             hd6StreamOffset += hd6Stream.skip(8); // magic, p_nameChunkData
             hd6StreamOffset += hd6Stream.read(bb_nameChunkDataSize.array());
             hd6StreamOffset += hd6Stream.skip(8); // nameChunkCount, unk
@@ -82,43 +85,56 @@ class Extraction {
             hd6StreamOffset += hd6Stream.skip(8); // unk, unk
             hd6StreamOffset += hd6Stream.read(bb_fileCount.array());
             hd6StreamOffset += hd6Stream.read(bb_p_fileEntries.array());
-            hd6StreamOffset += hd6Stream.skip(8); // p_lbaData, unk, fileSize. end of header
+            hd6StreamOffset += hd6Stream.skip(8); // unk, fileSize. end of header
 
+            // Make integers from ByteBuffers...
             int nameChunkDataSize = bb_nameChunkDataSize.getInt();
             int p_filenameTable = bb_p_filenameTable.getInt();
             int filenameTableSize = bb_filenameTableSize.getInt();
             int p_fileEntries = bb_p_fileEntries.getInt();
             int fileCount = bb_fileCount.getInt() - 1; // -1 is here to remove the final dummy
+            // ...and create others for nameChunkData, filenameTable and an array for fileEntries
             ByteBuffer bb_nameChunkData = ByteBuffer.allocate(nameChunkDataSize).order(LITTLE_ENDIAN);
             ByteBuffer bb_filenameTable = ByteBuffer.allocate(filenameTableSize).order(LITTLE_ENDIAN);
             ByteBuffer[] bb_fileEntryArr = new ByteBuffer[fileCount];
 
+            // Read nameChunkData, filenameTable and fileEntries
+            System.out.println("Reading name chunk data...");
             hd6StreamOffset += hd6Stream.read(bb_nameChunkData.array());
             hd6StreamOffset += hd6Stream.skip(p_filenameTable - hd6StreamOffset); // skip to filenameTable
+            System.out.println("Reading filename table...");
             hd6StreamOffset += hd6Stream.read(bb_filenameTable.array());
             hd6StreamOffset += hd6Stream.skip(p_fileEntries - hd6StreamOffset); // skip to fileEntries
+            System.out.println("Reading file entries...");
             for (int i = 0; i < fileCount; i++) {
                 bb_fileEntryArr[i] = ByteBuffer.allocate(8).order(LITTLE_ENDIAN);
                 hd6StreamOffset += hd6Stream.read(bb_fileEntryArr[i].array());
             }
 
+            // Create arrays for start offsets, file sizes, and filenames
             int[] startOffsetArr = new int[fileCount];
             int[] fileSizeArr = new int[fileCount];
+            String[] filenameArr = new String[fileCount];
+
+            // Decode name chunk data and make an array
             String[] nameChunkArr = Charset.forName("Shift_JIS").decode(bb_nameChunkData).toString().split("\0");
+
+            // Populate start offset and file size arrays
             for (int i = 0; i < fileCount; i++) {
                 bb_fileEntryArr[i].position(2); // Skip filenameTableOffset
                 byte[] ba = new byte[3];
                 for (int j = 0; j < 3; j++) {
                     ba[j] = bb_fileEntryArr[i].get();
                 }
-                startOffsetArr[i] = (uint24ToInt(ba) & 0xFFFFFE) << 0x9;
+                startOffsetArr[i] = (uint24ToInt(ba) & 0xFFFFFE) << 0x9; // bit magic
                 for (int j = 0; j < 3; j++) {
                     ba[j] = bb_fileEntryArr[i].get();
                 }
                 fileSizeArr[i] = uint24ToInt(ba) << 0x4;
             }
 
-            String[] filenameArr = new String[fileCount];
+            // Populate filename array
+            System.out.println("Decoding filenames...");
             for (int i = 0; i < fileCount; i++) {
                 filenameArr[i] = "";
                 byte b;
@@ -136,16 +152,19 @@ class Extraction {
                 }
             }
 
+            // Write the resulting files
+            System.out.println("Writing files...");
             int datStreamOffset = 0;
             for (int i = 0; i < fileCount; i++) {
-                ByteBuffer bb_fileData = ByteBuffer.allocate(fileSizeArr[i]);
-                datStreamOffset += datStream.skip(startOffsetArr[i] - datStreamOffset);
-                datStreamOffset += datStream.read(bb_fileData.array());
+                byte[] fileData = new byte[fileSizeArr[i]];
+                datStreamOffset += datStream.skip(startOffsetArr[i] - datStreamOffset); // skip to next file
+                datStreamOffset += datStream.read(fileData);
 
+                // Create folders and write the file
                 Path destFilePath = folderPath.resolve(filenameArr[i]);
                 Path destFileFolderPath = destFilePath.getParent();
                 Files.createDirectories(destFileFolderPath);
-                Files.write(destFilePath, bb_fileData.array());
+                Files.write(destFilePath, fileData);
             }
         } catch (IOException e) {
             e.printStackTrace();
