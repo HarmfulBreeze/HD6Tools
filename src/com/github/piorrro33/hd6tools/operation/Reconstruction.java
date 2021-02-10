@@ -85,28 +85,36 @@ class Reconstruction {
         ByteBuffer bb_nameChunkData = CS_SHIFT_JIS.encode(s_nameChunkData);
         int nameChunkDataSize = bb_nameChunkData.remaining();
         int nameChunkDataPadding = 0x10 - ((0x34 + nameChunkDataSize) % 0x10);
-
         byte[] ba;
-        short[] sa = null;
-        int filenameTableSize;
         if (fileCount < 0x80) {
-            ba = new byte[fileCount];
-            for (byte i = 0; i < fileCount; i++) {
-                ba[i] = i;
+            ba = new byte[fileCount * 2];
+            byte i = 0;
+            byte j = 0;
+            while (j < fileCount) {
+                ba[i] = j;
+                ba[i + 1] = 0;
+                i += 2;
+                j += 1;
             }
-            filenameTableSize = ba.length * Byte.BYTES;
         } else {
-            ba = new byte[0x80];
-            sa = new short[fileCount - 0x80];
-            for (int i = 0; i < fileCount; i++) {
-                if (i < 0x80) {
-                    ba[i] = (byte) i;
-                } else {
-                    sa[i - 0x80] = (short) ((i / 0x80 << 8) | (0x80 + i % 0x80));
-                }
+            ba = new byte[0x80 * 2 + (fileCount - 0x80) * 3];
+            int i = 0;
+            short j = 0;
+            while (j < 0x80) {
+                ba[i] = (byte) j;
+                ba[i + 1] = 0;
+                i += 0x2;
+                j += 0x1;
             }
-            filenameTableSize = (ba.length * Byte.BYTES) + (sa.length * Short.BYTES);
+            while (j < fileCount) {
+                ba[i] = (byte) (0x80 + j % 0x80);
+                ba[i + 1] = (byte) (j / 0x80);
+                ba[i + 2] = 0;
+                i += 0x3;
+                j += 0x1;
+            }
         }
+        int filenameTableSize = ba.length * Byte.BYTES;
         int filenameTablePadding = 0x10 - (filenameTableSize % 0x10);
 
         // File entries
@@ -115,7 +123,12 @@ class Reconstruction {
         for (int i = 0; i < fileCount; i++) {
             Path curFilePath = filePathList.get(i);
             bb_fileEntryArr[i] = ByteBuffer.allocate(8).order(LITTLE_ENDIAN);
-            short filenameOffset = (short) i;
+            short filenameOffset;
+            if (i < 0x80) {
+                filenameOffset = (short) (i * 2);
+            } else {
+                filenameOffset = (short) (0x100 + ((i - 0x80) * 3));
+            }
             int curFileSize;
             try {
                 curFileSize = (int) Files.size(curFilePath);
@@ -131,6 +144,7 @@ class Reconstruction {
 
         try (OutputStream datStream = new BufferedOutputStream(Files.newOutputStream(datPath));
              OutputStream hd6Stream = new BufferedOutputStream(Files.newOutputStream(hd6Path))) {
+            System.out.println("Writing HD6...");
             ByteBuffer bb_header = ByteBuffer.allocate(52).order(ByteOrder.LITTLE_ENDIAN);
             byte[] magic = {0x48, 0x44, 0x36, 0x0}; // HD6\0 in little endian
             bb_header.put(magic);
@@ -155,14 +169,19 @@ class Reconstruction {
 
             ByteBuffer bb_filenameTable = ByteBuffer.allocate(filenameTableSize).order(LITTLE_ENDIAN);
             bb_filenameTable.put(ba);
-            if (sa != null) {
-                bb_filenameTable.asShortBuffer().put(sa);
-            }
             hd6Stream.write(bb_filenameTable.array());
             hd6Stream.write(new byte[filenameTablePadding]);
 
             for (ByteBuffer bb_fileEntry : bb_fileEntryArr) {
                 hd6Stream.write(bb_fileEntry.array());
+            }
+            // Done writing HD6
+
+            System.out.println("Writing DAT...");
+            for (Path path : filePathList) {
+                int curFileSize = (int) Files.size(path);
+                datStream.write(Files.readAllBytes(path));
+                datStream.write(new byte[0x800 - (curFileSize % 0x800)]);
             }
         } catch (IOException e) {
             e.printStackTrace();
