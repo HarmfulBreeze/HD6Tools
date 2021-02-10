@@ -126,7 +126,7 @@ class Extraction {
                 for (int j = 0; j < 3; j++) {
                     ba[j] = bb_fileEntryArr[i].get();
                 }
-                startOffsetArr[i] = (uint24ToInt(ba) & 0xFFFFFE) << 0x9; // bit magic
+                startOffsetArr[i] = (uint24ToInt(ba) & 0xFFFFFC) << 0x9; // bit magic
                 for (int j = 0; j < 3; j++) {
                     ba[j] = bb_fileEntryArr[i].get();
                 }
