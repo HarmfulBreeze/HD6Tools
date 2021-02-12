@@ -8,15 +8,15 @@ import java.nio.ByteOrder;
 import java.nio.charset.Charset;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Scanner;
+import java.util.*;
+import java.util.stream.IntStream;
 import java.util.stream.Stream;
 
 import static java.nio.ByteOrder.LITTLE_ENDIAN;
 
 class Reconstruction {
     private static final Charset CS_SHIFT_JIS = Charset.forName("Shift_JIS");
+    private static List<String> FILENAME_DICTIONARY = null;
 
     public static boolean perform(Path datPath, Path hd6Path, Path sourceFolderPath) {
         // Check if source folder exists and if DAT/HD6 files do not exist
@@ -76,46 +76,29 @@ class Reconstruction {
             return false;
         }
 
+        // Process file path list
         int fileCount = filePathList.size();
-        String[] strArr = new String[fileCount];
-        for (int i = 0; i < fileCount; i++) {
-            strArr[i] = sourceFolderPath.relativize(filePathList.get(i)).toString();
+        List<Integer> indexList = new LinkedList<>();
+        for (Path path : filePathList) {
+            String s_relativeFilePath = sourceFolderPath.relativize(path).toString();
+            indexList.addAll(getDictionaryIndexes(s_relativeFilePath));
         }
-        String s_nameChunkData = String.join("\0", strArr) + "\0";
+        String s_nameChunkData = "\0" + String.join("\0", FILENAME_DICTIONARY) + "\0";
         ByteBuffer bb_nameChunkData = CS_SHIFT_JIS.encode(s_nameChunkData);
-        int nameChunkDataSize = bb_nameChunkData.remaining();
-        int nameChunkDataPadding = 0x10 - ((0x34 + nameChunkDataSize) % 0x10);
-        byte[] ba;
-        if (fileCount < 0x80) {
-            ba = new byte[fileCount * 2];
-            byte i = 0;
-            byte j = 0;
-            while (j < fileCount) {
-                ba[i] = j;
-                ba[i + 1] = 0;
-                i += 2;
-                j += 1;
-            }
-        } else {
-            ba = new byte[0x80 * 2 + (fileCount - 0x80) * 3];
-            int i = 0;
-            short j = 0;
-            while (j < 0x80) {
-                ba[i] = (byte) j;
-                ba[i + 1] = 0;
-                i += 0x2;
-                j += 0x1;
-            }
-            while (j < fileCount) {
-                ba[i] = (byte) (0x80 + j % 0x80);
-                ba[i + 1] = (byte) (j / 0x80);
-                ba[i + 2] = 0;
-                i += 0x3;
-                j += 0x1;
+        int nameChunkDataSize = bb_nameChunkData.limit();
+        int nameChunkDataPadding = (0x10 - (0x34 + nameChunkDataSize) % 0x10) % 0x10;
+        ByteBuffer bb_filenameTable = ByteBuffer.allocate(indexList.size() * 2);
+        for (Integer index : indexList) {
+            if (index < 0x80) {
+                bb_filenameTable.put(index.byteValue());
+            } else {
+                bb_filenameTable.put((byte) (0x80 + index % 0x80));
+                bb_filenameTable.put((byte) (index / 0x80));
             }
         }
-        int filenameTableSize = ba.length * Byte.BYTES;
-        int filenameTablePadding = 0x10 - (filenameTableSize % 0x10);
+        int filenameTableSize = bb_filenameTable.position();
+        int filenameTablePadding = (0x10 - filenameTableSize % 0x10) % 0x10;
+        bb_filenameTable.rewind();
 
         // File entries
         ByteBuffer[] bb_fileEntryArr = new ByteBuffer[fileCount];
@@ -129,6 +112,7 @@ class Reconstruction {
             } else {
                 filenameOffset = (short) (0x100 + ((i - 0x80) * 3));
             }
+//            short filenameOffset = (short) getFilenameTableOffset(i);
             int curFileSize;
             try {
                 curFileSize = (int) Files.size(curFilePath);
@@ -139,7 +123,7 @@ class Reconstruction {
             bb_fileEntryArr[i].putShort(filenameOffset);
             bb_fileEntryArr[i].put(intToUint24(startOffset >> 0x9));
             bb_fileEntryArr[i].put(intToUint24(curFileSize >> 0x4));
-            startOffset += curFileSize + (0x800 - (curFileSize % 0x800));
+            startOffset += curFileSize + (0x800 - curFileSize % 0x800) % 0x800;
         }
 
         try (OutputStream datStream = new BufferedOutputStream(Files.newOutputStream(datPath));
@@ -150,7 +134,7 @@ class Reconstruction {
             bb_header.put(magic);
             bb_header.putInt(0x34); // header size
             bb_header.putInt(nameChunkDataSize);
-            bb_header.putInt(fileCount); // name chunk amount (I'm lazy so it's file count)
+            bb_header.putInt(FILENAME_DICTIONARY.size() + 1); // name chunk amount (including first null byte)
             bb_header.putInt(0); // unk
             bb_header.putInt(0x34 + nameChunkDataSize + nameChunkDataPadding); // p_filenameTable
             bb_header.putInt(filenameTableSize);
@@ -159,7 +143,7 @@ class Reconstruction {
             bb_header.putInt(fileCount); // fileCount
             bb_header.putInt(0x34 + nameChunkDataSize + nameChunkDataPadding + filenameTableSize + filenameTablePadding); // p_fileEntries
             bb_header.putInt(0); // unk
-            bb_header.putInt(0x34 + nameChunkDataSize + nameChunkDataPadding + filenameTableSize + filenameTablePadding + (fileCount * 0x8)); // fileSize
+            bb_header.putInt(0x34 + nameChunkDataSize + nameChunkDataPadding + filenameTableSize + filenameTablePadding + (bb_fileEntryArr.length * 0x8)); // fileSize
             hd6Stream.write(bb_header.array());
 
             while (bb_nameChunkData.hasRemaining()) {
@@ -167,9 +151,9 @@ class Reconstruction {
             }
             hd6Stream.write(new byte[nameChunkDataPadding]);
 
-            ByteBuffer bb_filenameTable = ByteBuffer.allocate(filenameTableSize).order(LITTLE_ENDIAN);
-            bb_filenameTable.put(ba);
-            hd6Stream.write(bb_filenameTable.array());
+            while (bb_filenameTable.position() < filenameTableSize) {
+                hd6Stream.write(bb_filenameTable.get());
+            }
             hd6Stream.write(new byte[filenameTablePadding]);
 
             for (ByteBuffer bb_fileEntry : bb_fileEntryArr) {
@@ -181,16 +165,12 @@ class Reconstruction {
             for (Path path : filePathList) {
                 int curFileSize = (int) Files.size(path);
                 datStream.write(Files.readAllBytes(path));
-                datStream.write(new byte[0x800 - (curFileSize % 0x800)]);
+                datStream.write(new byte[(0x800 - (curFileSize % 0x800)) % 0x800]);
             }
         } catch (IOException e) {
             e.printStackTrace();
         }
         return true;
-    }
-
-    private static int uint24ToInt(byte[] ba) {
-        return ((ba[0] & 0xFF) | ((ba[1] & 0xFF) << 8) | ((ba[2] & 0xFF) << 16));
     }
 
     private static byte[] intToUint24(int val) {
@@ -199,5 +179,32 @@ class Reconstruction {
         ba[1] = (byte) ((val >> 0x8) & 0xFF);
         ba[2] = (byte) ((val >> 0x10) & 0xFF);
         return ba;
+    }
+
+    private static List<Integer> getDictionaryIndexes(String str) {
+        if (FILENAME_DICTIONARY == null) { // Initialize dictionary
+            FILENAME_DICTIONARY = new ArrayList<>(4300); // DC Data0_0 has 4277
+        }
+        List<Integer> intList = new LinkedList<>();
+        String[] split = str.split("(?=[._\\\\-])");
+        for (String part : split) {
+            OptionalInt dictIndex = IntStream.range(0, FILENAME_DICTIONARY.size())
+                    .filter(i -> FILENAME_DICTIONARY.get(i).equals(part))
+                    .findFirst();
+            dictIndex.ifPresentOrElse(e -> intList.add(e + 1), () -> {
+                intList.add(FILENAME_DICTIONARY.size() + 1);
+                FILENAME_DICTIONARY.add(part);
+            });
+        }
+        intList.add(0);
+        return intList;
+    }
+
+    private static int getFilenameTableOffset(int index) {
+        int sum = 0;
+        for (int i = 0; i < index; i++) {
+            sum += FILENAME_DICTIONARY.get(i).length();
+        }
+        return sum;
     }
 }
