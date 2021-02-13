@@ -103,16 +103,11 @@ class Reconstruction {
         // File entries
         ByteBuffer[] bb_fileEntryArr = new ByteBuffer[fileCount];
         int startOffset = 0;
+        int[] filenameTableOffsets = getFilenameTableOffsets(bb_filenameTable.array());
         for (int i = 0; i < fileCount; i++) {
             Path curFilePath = filePathList.get(i);
             bb_fileEntryArr[i] = ByteBuffer.allocate(8).order(LITTLE_ENDIAN);
-            short filenameOffset;
-            if (i < 0x80) {
-                filenameOffset = (short) (i * 2);
-            } else {
-                filenameOffset = (short) (0x100 + ((i - 0x80) * 3));
-            }
-//            short filenameOffset = (short) getFilenameTableOffset(i);
+            short filenameOffset = (short) filenameTableOffsets[i];
             int curFileSize;
             try {
                 curFileSize = (int) Files.size(curFilePath);
@@ -200,11 +195,14 @@ class Reconstruction {
         return intList;
     }
 
-    private static int getFilenameTableOffset(int index) {
-        int sum = 0;
-        for (int i = 0; i < index; i++) {
-            sum += FILENAME_DICTIONARY.get(i).length();
+    private static int[] getFilenameTableOffsets(byte[] filenameTableArr) {
+        List<Integer> filenameOffsetList = new LinkedList<>();
+        filenameOffsetList.add(0x00); // first filename is at offset 0x00
+        for (int i = 0; i < filenameTableArr.length; i++) {
+            if (filenameTableArr[i] == 0x00) {
+                filenameOffsetList.add(i + 1); // +1 because next filename table entry starts after the 0x00
+            }
         }
-        return sum;
+        return filenameOffsetList.stream().mapToInt(Integer::intValue).toArray();
     }
 }
