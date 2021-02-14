@@ -7,12 +7,16 @@ import java.nio.ByteBuffer;
 import java.nio.charset.Charset;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Scanner;
 import java.util.stream.Stream;
 
 import static java.nio.ByteOrder.LITTLE_ENDIAN;
 
 class Extraction {
+    private static final Charset CS_SHIFT_JIS = Charset.forName("Shift_JIS");
+
     public static boolean perform(Path datPath, Path hd6Path, Path destFolderPath) {
         // Check if dat/hd6 exist, create destination folder if needed
         if (Files.notExists(datPath)) {
@@ -117,7 +121,7 @@ class Extraction {
             String[] filenameArr = new String[fileCount];
 
             // Decode name chunk data and make an array
-            String[] nameChunkArr = Charset.forName("Shift_JIS").decode(bb_nameChunkData).toString().split("\0");
+            int[] nameChunkDataOffsetArr = getNameChunkDataOffsetArr(bb_nameChunkData.array());
 
             // Populate start offset and file size arrays
             for (int i = 0; i < fileCount; i++) {
@@ -136,8 +140,9 @@ class Extraction {
             // Populate filename array
             System.out.println("Decoding filenames...");
             for (int i = 0; i < fileCount; i++) {
-                filenameArr[i] = "";
                 byte b;
+                ByteBuffer bb_filename = ByteBuffer.allocate(580); // (Windows MAX_PATH, 260) * (max bytes for a Shift JIS char, 2)
+                int filenameOffset = 0;
                 while ((b = bb_filenameTable.get()) != 0) {
                     int finalIndex;
                     if ((b & 0x80) != 0) { // 2-byte index
@@ -148,8 +153,13 @@ class Extraction {
                     } else { // 1-byte index
                         finalIndex = b;
                     }
-                    filenameArr[i] += nameChunkArr[finalIndex];
+                    int curOffset = nameChunkDataOffsetArr[finalIndex];
+                    int nextOffset = nameChunkDataOffsetArr[finalIndex + 1];
+                    int chunkSize = nextOffset - curOffset - 1; // -1 to remove trailing NUL
+                    bb_nameChunkData.get(curOffset, bb_filename.array(), filenameOffset, chunkSize);
+                    filenameOffset += chunkSize;
                 }
+                filenameArr[i] = CS_SHIFT_JIS.decode(bb_filename.slice(0, filenameOffset)).toString();
             }
 
             // Write the resulting files
@@ -190,5 +200,16 @@ class Extraction {
 
     private static int uint24ToInt(byte[] ba) {
         return ((ba[0] & 0xFF) | ((ba[1] & 0xFF) << 8) | ((ba[2] & 0xFF) << 16));
+    }
+
+    private static int[] getNameChunkDataOffsetArr(byte[] nameChunkData) {
+        List<Integer> offsetList = new ArrayList<>(nameChunkData.length / 2); // safe initial capacity
+        offsetList.add(0); // add first null offset
+        for (int i = 0; i < nameChunkData.length; i++) {
+            if (nameChunkData[i] == 0x00) {
+                offsetList.add(i + 1);
+            }
+        }
+        return offsetList.stream().mapToInt(Integer::intValue).toArray();
     }
 }
