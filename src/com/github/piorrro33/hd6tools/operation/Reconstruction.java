@@ -1,6 +1,7 @@
 package com.github.piorrro33.hd6tools.operation;
 
 import java.io.BufferedOutputStream;
+import java.io.File;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.nio.ByteBuffer;
@@ -9,15 +10,14 @@ import java.nio.charset.Charset;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.*;
-import java.util.stream.Collectors;
 import java.util.stream.IntStream;
-import java.util.stream.Stream;
 
 import static java.nio.ByteOrder.LITTLE_ENDIAN;
 
 class Reconstruction {
     private static final Charset CS_SHIFT_JIS = Charset.forName("Shift_JIS");
-    private static List<String> FILENAME_DICTIONARY = null;
+    private static final List<String> FILENAME_DICTIONARY = new ArrayList<>(4300); // DC Data0_0 has 4277
+    private static final Map<String, Integer> FILENAME_DICT_COUNTS = new HashMap<>(4300);
 
     public static boolean perform(Path datPath, Path hd6Path, Path sourceFolderPath) {
         // Check if source folder exists and if DAT/HD6 files do not exist
@@ -70,19 +70,18 @@ class Reconstruction {
 
         // Make a list holding paths to all the files in the source folder.
         System.out.println("Browsing source folder...");
-        List<Path> filePathList = new ArrayList<>();
-        try (Stream<Path> walk = Files.walk(sourceFolderPath)) {
-            List<Path> collect = walk.filter(Files::isRegularFile).collect(Collectors.toList());
-            filePathList.addAll(collect);
-            filePathList.add(collect.get(collect.size() - 1));
-        } catch (IOException e) {
-            System.err.println("Error while browsing the source folder! " + e.getLocalizedMessage());
-            return false;
-        }
+        List<Path> filePathList = getFilePathList(sourceFolderPath);
 
         // Process file path list
         System.out.println("Processing file paths...");
         List<Integer> indexList = new LinkedList<>();
+        for (Path path : filePathList) {
+            String s_relativeFilePath = sourceFolderPath.relativize(path).toString();
+            getDictionaryIndexes(s_relativeFilePath);
+        }
+        //dumb ide forces me to write the below line
+        //noinspection SuspiciousMethodCalls
+        FILENAME_DICTIONARY.sort(Comparator.comparingInt(FILENAME_DICT_COUNTS::get).reversed());
         for (Path path : filePathList) {
             String s_relativeFilePath = sourceFolderPath.relativize(path).toString();
             indexList.addAll(getDictionaryIndexes(s_relativeFilePath));
@@ -101,7 +100,7 @@ class Reconstruction {
             }
         }
         int filenameTableSize = bb_filenameTable.position();
-        int filenameTablePadding = (0x4 - filenameTableSize % 0x4) % 0x4;
+        int filenameTablePadding = (0x8 - filenameTableSize % 0x8) % 0x8;
         bb_filenameTable.rewind();
 
         // File entries
@@ -113,7 +112,7 @@ class Reconstruction {
         for (int i = 0; i < fileCount; i++) {
             Path curFilePath = filePathList.get(i);
             bb_fileEntryArr[i] = ByteBuffer.allocate(8).order(LITTLE_ENDIAN);
-            short filenameOffset = (short) filenameTableOffsets[i];
+            int filenameOffset = filenameTableOffsets[i];
             int curFileSize;
             try {
                 curFileSize = (int) Files.size(curFilePath);
@@ -121,14 +120,14 @@ class Reconstruction {
                 e.printStackTrace();
                 return false;
             }
-            bb_fileEntryArr[i].putShort(filenameOffset);
-            bb_fileEntryArr[i].put(intToUint24(startOffset >> 0x9));
+            bb_fileEntryArr[i].putShort((short) filenameOffset);
+            bb_fileEntryArr[i].put(intToUint24((startOffset >> 0x9) | (filenameOffset >> 0x10)));
             bb_fileEntryArr[i].put(intToUint24(curFileSize >> 0x4));
             startOffset += curFileSize + (0x800 - curFileSize % 0x800) % 0x800;
         }
         bb_fileEntryArr[fileCount] = ByteBuffer.allocate(8).order(LITTLE_ENDIAN); // write dummy
         bb_fileEntryArr[fileCount].putShort((short) filenameTableOffsets[fileCount]);
-        bb_fileEntryArr[fileCount].put(intToUint24(1));
+        bb_fileEntryArr[fileCount].put(intToUint24(filenameTableOffsets[fileCount] >> 0x10));
         bb_fileEntryArr[fileCount].put(intToUint24(0));
 
         try (OutputStream datStream = new BufferedOutputStream(Files.newOutputStream(datPath));
@@ -138,11 +137,11 @@ class Reconstruction {
             byte[] magic = {0x48, 0x44, 0x36, 0x0}; // HD6\0 in little endian
             bb_header.put(magic);
             bb_header.putInt(0x34); // header size
-            bb_header.putInt(nameChunkDataSize);
+            bb_header.putInt(nameChunkDataSize + nameChunkDataPadding);
             bb_header.putInt(FILENAME_DICTIONARY.size() + 2); // name chunk amount (with first and last null bytes)
             bb_header.putInt(0); // unk
             bb_header.putInt(0x34 + nameChunkDataSize + nameChunkDataPadding); // p_filenameTable
-            bb_header.putInt(filenameTableSize);
+            bb_header.putInt(filenameTableSize + filenameTablePadding);
             bb_header.putInt(0); // unk
             bb_header.putInt(0x10); // unk
             bb_header.putInt(bb_fileEntryArr.length); // fileCount
@@ -189,18 +188,41 @@ class Reconstruction {
     }
 
     private static List<Integer> getDictionaryIndexes(String str) {
-        if (FILENAME_DICTIONARY == null) { // Initialize dictionary
-            FILENAME_DICTIONARY = new ArrayList<>(4300); // DC Data0_0 has 4277
-        }
         List<Integer> intList = new LinkedList<>();
-        String[] split = str.split("(?=[._\\\\-])");
+        List<String> split = new ArrayList<>();
+        StringBuilder s = new StringBuilder();
+        for (char c : str.toCharArray()) {
+            if (c == '.' || c == '_' || c == '\\' || c == '-') {
+                boolean shifted = false;
+                int count = 0;
+                for (char c1 : s.toString().toCharArray()) {
+                    if ((c1 != '.' && c1 != '_' && c1 != '\\' && c1 != '-') || count == 2) {
+                        split.add(s.toString());
+                        s = new StringBuilder("" + c);
+                        shifted = true;
+                        break;
+                    }
+                    count++;
+                }
+                if (!shifted) {
+                    s.append(c);
+                }
+            } else {
+                s.append(c);
+            }
+        }
+        split.add(s.toString());
         for (String part : split) {
             OptionalInt dictIndex = IntStream.range(0, FILENAME_DICTIONARY.size())
                     .filter(i -> FILENAME_DICTIONARY.get(i).equals(part))
                     .findFirst();
-            dictIndex.ifPresentOrElse(e -> intList.add(e + 1), () -> {
+            dictIndex.ifPresentOrElse(i -> {
+                intList.add(i + 1);
+                FILENAME_DICT_COUNTS.put(part, FILENAME_DICT_COUNTS.get(part) + 1);
+            }, () -> {
                 intList.add(FILENAME_DICTIONARY.size() + 1);
                 FILENAME_DICTIONARY.add(part);
+                FILENAME_DICT_COUNTS.put(part, 1);
             });
         }
         intList.add(0);
@@ -216,5 +238,23 @@ class Reconstruction {
             }
         }
         return filenameOffsetList.stream().mapToInt(Integer::intValue).toArray();
+    }
+
+    private static List<Path> getFilePathList(Path sourceFolderPath) {
+        List<Path> filePathList = new ArrayList<>(4300);
+        Stack<File> stack = new Stack<>();
+        stack.add(sourceFolderPath.toFile());
+
+        while (!stack.empty()) {
+            File current = stack.pop();
+            File[] fileDirList = current.listFiles();
+
+            if (fileDirList != null) {
+                Arrays.stream(fileDirList).filter(File::isFile).sorted().forEachOrdered(f -> filePathList.add(f.toPath()));
+                Arrays.stream(fileDirList).filter(File::isDirectory).sorted(Comparator.reverseOrder()).forEachOrdered(stack::push);
+            }
+        }
+        filePathList.add(filePathList.get(filePathList.size() - 1));
+        return filePathList;
     }
 }
