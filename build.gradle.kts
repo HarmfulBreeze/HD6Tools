@@ -11,6 +11,7 @@ application {
 
 tasks.withType<JavaCompile> {
     options.compilerArgs.add("-Aproject=${project.group}/${project.name}")
+    options.release.set(15)
 }
 
 repositories {
