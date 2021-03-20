@@ -40,8 +40,7 @@ class Extraction {
             if (walk.count() > 1) {
                 System.out.println("Warning! The destination folder is not empty. Some files may be overwritten.\n" +
                         "Do you want to proceed (yes or no)?");
-                Scanner sc = new Scanner(System.in);
-                final String userAnswer = sc.nextLine();
+                String userAnswer = new Scanner(System.in).nextLine();
                 if (!userAnswer.equalsIgnoreCase("yes") && !userAnswer.equalsIgnoreCase("y")) {
                     // User did not answer yes
                     System.out.println("Aborting.");
