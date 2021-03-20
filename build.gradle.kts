@@ -1,17 +1,35 @@
 plugins {
     application
+    id("org.beryx.runtime") version "1.12.2"
 }
 
 group = "com.piorrro33"
-version = "1.0-SNAPSHOT"
+version = "0.2-SNAPSHOT"
 
 application {
     mainClass.set("com.github.piorrro33.hd6tools.Main")
 }
 
+java {
+    toolchain {
+        languageVersion.set(JavaLanguageVersion.of(16))
+    }
+}
+
+runtime {
+    addOptions("--strip-debug", "--compress", "2", "--no-header-files", "--no-man-pages")
+    modules.addAll("java.base")
+    jpackage {
+        appVersion = "0.2"
+        imageOptions = listOf("--win-console")
+    }
+}
+
 tasks.withType<JavaCompile> {
     options.compilerArgs.add("-Aproject=${project.group}/${project.name}")
-    options.release.set(15)
+    options.release.set(16)
+    // Hack for Java 16 support
+    options.forkOptions.jvmArgs?.addAll(listOf("--add-opens", "jdk.compiler/com.sun.tools.javac.code=ALL-UNNAMED"))
 }
 
 repositories {
