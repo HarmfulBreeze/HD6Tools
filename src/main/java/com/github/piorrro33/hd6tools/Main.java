@@ -6,11 +6,9 @@ import picocli.CommandLine;
 import picocli.CommandLine.Command;
 import picocli.CommandLine.Parameters;
 
-import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.InvalidPathException;
 import java.nio.file.Path;
-import java.util.Optional;
 import java.util.concurrent.Callable;
 
 @Command(name = "HD6Tools", version = Main.APPLICATION_VERSION, description = "Level-5 DAT/HD6 file format tool",
@@ -27,23 +25,11 @@ public class Main implements Callable<Integer> {
     @Parameters(index = "1", arity = "0..1", paramLabel = "PATH_2", description = """
             Extract: path to destination folder.
             Rebuild: path to HD6 file.""")
-    private Optional<Path> optPath2;
+    private Path path2;
 
     public static void main(String[] args) {
         int exitCode = new CommandLine(new Main()).execute(args);
         System.exit(exitCode);
-    }
-
-    private static Path hd6PathToDatPath(Path hd6Path) {
-        String hd6FileName = hd6Path.getFileName().toString();
-        String hd6FileNameNoExt = hd6FileName.substring(0, hd6FileName.length() - 4);
-        return hd6Path.getParent().resolve(hd6FileNameNoExt + ".dat");
-    }
-
-    private static Path createFolderAfterHD6FileName(Path hd6Path) throws IOException {
-        String hd6FileName = hd6Path.getFileName().toString();
-        String hd6FileNameNoExt = hd6FileName.substring(0, hd6FileName.length() - 4);
-        return Files.createDirectories(hd6Path.getParent().resolve(hd6FileNameNoExt));
     }
 
     @Override
@@ -53,19 +39,22 @@ public class Main implements Callable<Integer> {
         boolean isSuccessful;
         OperationMode mode;
         Path datPath, hd6Path, folderPath;
-        // TODO: make ".HD6" be recognized by pattern
-        if (path1.toString().matches(".*.hd6$") && Files.isRegularFile(path1)) {
-            // path1 is an HD6 file, so we want to extract it
+        if (Utils.isPathToHD6(path1) && Files.isRegularFile(path1)) {
+            // path1 is an HD6 file --> Extraction mode
             mode = OperationMode.EXTRACT;
             hd6Path = path1;
-            datPath = hd6PathToDatPath(hd6Path);
-            if (optPath2.isEmpty()) {
-                folderPath = createFolderAfterHD6FileName(hd6Path);
-            } else if (!Files.isDirectory(optPath2.get())) {
-                // TODO: folder path is not a folder
-                return CommandLine.ExitCode.USAGE;
+            datPath = Utils.hd6PathToDatPath(hd6Path);
+            if (path2 == null) {
+                // No folder path given, will create a folder after the file name of the HD6 file
+                folderPath = Utils.createFolderAfterHD6FileName(hd6Path);
+            } else if (Files.isDirectory(path2)) {
+                // Folder path given is a valid directory, so we'll use it
+                folderPath = path2;
             } else {
-                folderPath = optPath2.get();
+                // Second path given is not a directory path, invalid usage
+                System.err.println("Error: PATH_2 is not a folder!");
+                CommandLine.usage(this, System.out);
+                return CommandLine.ExitCode.USAGE;
             }
         } else {
             // TODO: write rebuild
