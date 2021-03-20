@@ -10,19 +10,37 @@ public class Utils {
     public static Path hd6PathToDatPath(Path hd6Path) {
         String hd6FileName = hd6Path.getFileName().toString();
         String hd6FileNameNoExt = hd6FileName.substring(0, hd6FileName.length() - 4);
-        return hd6Path.getParent().resolve(hd6FileNameNoExt + ".dat");
+        Path hd6Parent = hd6Path.getParent();
+        if (hd6Parent != null) {
+            return hd6Parent.resolve(hd6FileNameNoExt + ".dat");
+        } else {
+            return Path.of(hd6FileNameNoExt + ".dat");
+        }
     }
 
     public static Path createFolderAfterHD6FileName(Path hd6Path) throws IOException {
         String hd6FileName = hd6Path.getFileName().toString();
         String hd6FileNameNoExt = hd6FileName.substring(0, hd6FileName.length() - 4);
-        return Files.createDirectories(hd6Path.getParent().resolve(hd6FileNameNoExt));
+        Path absHD6Path = hd6Path.toAbsolutePath();
+        return Files.createDirectories(absHD6Path.getParent().resolve(hd6FileNameNoExt));
+    }
+
+    public static Path folderPathToHD6Path(Path folderPath) {
+        String folderName = folderPath.getFileName().toString();
+        Path folderParent = folderPath.getParent();
+        if (folderParent != null) {
+            return folderParent.resolve(folderName + ".hd6");
+        } else {
+            return Path.of(folderName + ".hd6");
+        }
     }
 
     public static boolean isPathToHD6(Path path) {
         // Case-insensitive regex to check for
         Pattern pattern = Pattern.compile(".*\\.hd6$", Pattern.CASE_INSENSITIVE);
         Matcher matcher = pattern.matcher(path.toString());
-        return matcher.matches();
+        boolean pathMatches = matcher.matches();
+        boolean isDirectory = Files.isDirectory(path);
+        return pathMatches && !isDirectory;
     }
 }

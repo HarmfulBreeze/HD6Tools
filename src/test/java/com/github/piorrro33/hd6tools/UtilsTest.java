@@ -30,5 +30,7 @@ class UtilsTest {
         assertFalse(Utils.isPathToHD6(hd6InFileName), hd6InFileName + " is not a path to a HD6 file");
         Path hd6AtEndOfFileName = Path.of("myhd6");
         assertFalse(Utils.isPathToHD6(hd6AtEndOfFileName), hd6AtEndOfFileName + " is not a path to a HD6 file");
+        Path dotHd6InFolderName = Path.of("test/doNotDelete.hd6");
+        assertFalse(Utils.isPathToHD6(dotHd6InFolderName), dotHd6InFolderName + " is not a path to a HD6 file");
     }
 }

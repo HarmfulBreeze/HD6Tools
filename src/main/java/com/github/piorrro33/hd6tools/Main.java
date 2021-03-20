@@ -7,7 +7,6 @@ import picocli.CommandLine.Command;
 import picocli.CommandLine.Parameters;
 
 import java.nio.file.Files;
-import java.nio.file.InvalidPathException;
 import java.nio.file.Path;
 import java.util.concurrent.Callable;
 
@@ -36,7 +35,6 @@ public class Main implements Callable<Integer> {
     public Integer call() throws Exception {
         System.out.println(APPLICATION_VERSION);
 
-        boolean isSuccessful;
         OperationMode mode;
         Path datPath, hd6Path, folderPath;
         if (Utils.isPathToHD6(path1) && Files.isRegularFile(path1)) {
@@ -47,8 +45,8 @@ public class Main implements Callable<Integer> {
             if (path2 == null) {
                 // No folder path given, will create a folder after the file name of the HD6 file
                 folderPath = Utils.createFolderAfterHD6FileName(hd6Path);
-            } else if (Files.isDirectory(path2)) {
-                // Folder path given is a valid directory, so we'll use it
+            } else if (!Files.isRegularFile(path2)) {
+                // Folder path given is a valid folder path, so we'll use it
                 folderPath = path2;
             } else {
                 // Second path given is not a directory path, invalid usage
@@ -56,25 +54,38 @@ public class Main implements Callable<Integer> {
                 CommandLine.usage(this, System.out);
                 return CommandLine.ExitCode.USAGE;
             }
+        } else if (Files.isDirectory(path1)) {
+            // path1 is a directory --> Rebuild mode
+            mode = OperationMode.REBUILD;
+            folderPath = path1;
+            if (path2 == null) {
+                // No HD6 file given, will use the folder name as DAT/HD6 file names
+                hd6Path = Utils.folderPathToHD6Path(folderPath);
+                datPath = Utils.hd6PathToDatPath(hd6Path);
+            } else if (Utils.isPathToHD6(path2)) {
+                // Path given is a path to an HD6 file, it will be used to make the DAT file path
+                hd6Path = path2;
+                datPath = Utils.hd6PathToDatPath(hd6Path);
+            } else {
+                // Second path is not a path to an HD6 file, invalid usage
+                System.err.println("Error: PATH_2 is not an HD6 file!");
+                CommandLine.usage(this, System.out);
+                return CommandLine.ExitCode.USAGE;
+            }
         } else {
-            // TODO: write rebuild
-            mode = null;
-            datPath = null;
-            hd6Path = null;
-            folderPath = null;
+            // path1 is neither a path to a folder nor an HD6 file, invalid usage
+            System.err.println("Error: PATH_1 is not an HD6 file or a folder!");
+            CommandLine.usage(this, System.out);
+            return CommandLine.ExitCode.USAGE;
         }
-        try {
-            // Get mode and check path validity
-            isSuccessful = Operations.perform(mode, datPath, hd6Path, folderPath);
-        } catch (InvalidPathException e) {
-            System.err.println("Invalid path: " + e.getInput());
-            isSuccessful = false;
-        }
+
+        boolean isSuccessful = Operations.perform(mode, datPath, hd6Path, folderPath);
         if (isSuccessful) {
             System.out.println("Operation completed.");
+            return 0;
         } else {
             System.err.println("Operation failed.");
+            return 1;
         }
-        return CommandLine.ExitCode.OK;
     }
 }
