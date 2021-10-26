@@ -10,11 +10,11 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.concurrent.Callable;
 
-@Command(name = "HD6Tools", version = Main.APPLICATION_VERSION, description = "Level-5 DAT/HD6 file format tool",
-        mixinStandardHelpOptions = true)
+@Command(name = Main.APPLICATION_NAME, version = Main.APPLICATION_VERSION,
+        description = "Level-5 DAT/HD6 file format tool", mixinStandardHelpOptions = true)
 public class Main implements Callable<Integer> {
     public static final String APPLICATION_NAME = "HD6Tools";
-    public static final String APPLICATION_VERSION = APPLICATION_NAME + " v0.1";
+    public static final String APPLICATION_VERSION = APPLICATION_NAME + " v0.2";
 
     @Parameters(index = "0", arity = "1", paramLabel = "PATH_1", description = """
             Extract: path to HD6 file.
