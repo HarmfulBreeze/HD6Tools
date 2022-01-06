@@ -191,6 +191,7 @@ class Reconstruction {
         List<Integer> intList = new LinkedList<>();
         List<String> split = new ArrayList<>();
         StringBuilder s = new StringBuilder();
+        str = str.replace(System.getProperty("file.separator"), "\\");
         for (char c : str.toCharArray()) {
             if (c == '.' || c == '_' || c == '\\' || c == '-') {
                 boolean shifted = false;

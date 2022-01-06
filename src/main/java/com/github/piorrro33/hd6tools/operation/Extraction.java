@@ -159,6 +159,7 @@ class Extraction {
                     filenameOffset += chunkSize;
                 }
                 filenameArr[i] = CS_SHIFT_JIS.decode(bb_filename.slice(0, filenameOffset)).toString();
+                filenameArr[i] = filenameArr[i].replace("\\", System.getProperty("file.separator"));
             }
 
             // Write the resulting files
